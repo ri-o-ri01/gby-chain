@@ -67,7 +67,7 @@ class GroupbyChainOperator:
         apply_df, columns_dict = apply_agg_by_groups(input_df, groups, tgt_names_func_list, True)
         tgt_names2 = apply_df.drop(groups, axis=1).columns
         level = self.level + 1
-        result = GroupbyResult(output_name, "apply-cnt", input_name, groups, indices, tgt_names2, None, None, apply_df,
+        result = GroupbyResult(output_name, "apply2-agg", input_name, groups, indices, tgt_names2, None, None, apply_df,
                                columns_dict, level)
         self.level_column_dict[str(level)] = columns_dict
         self.level_result_dict[str(level)] = result
@@ -96,7 +96,7 @@ class GroupbyChainOperator:
         if is_debug:
             print(tgt_names2)
         level = self.level + 1
-        result = GroupbyResult(output_name, "tf", input_name, groups, indices, tgt_names2, func_dict, funcs_name,
+        result = GroupbyResult(output_name, "transform", input_name, groups, indices, tgt_names2, func_dict, funcs_name,
                                tf_df, columns_dict, level)
         self.level_column_dict[str(level)] = columns_dict
         self.level_result_dict[str(level)] = result
@@ -130,7 +130,15 @@ class GroupbyChainOperator:
         ret_df = self.get_output_df(0, use_func_order)
         for l in np.arange(self.level):
             l_ret = self.level_result_dict[str(l + 1)]
-            ret_df = ret_df.merge(self.get_output_df(l + 1, use_func_order), on = l_ret.groups, how = "left")
+            method = l_ret.method
+            groups = l_ret.groups
+            output_df = self.get_output_df(l + 1, use_func_order)
+            if method == "tf":
+                ret_df = pd.concat(
+                    [ret_df, output_df.drop(groups, axis=1)],
+                    axis=1)
+            else:
+                ret_df  = ret_df.merge(output_df, on = groups, how = "left")
         return ret_df
 
     def get_log(self):
@@ -138,7 +146,7 @@ class GroupbyChainOperator:
 
 
 
-def apply_agg_by_groups(df, groups, tgt_tpl_list, use_func_order=False
+def apply_agg_by_groups(df, groups, col2_func_tpl_list, use_func_order=False
                         ):
     """
     DataFrameに対して指定されたグループとタプルリストに基づいて処理を適用する関数。
@@ -146,7 +154,7 @@ def apply_agg_by_groups(df, groups, tgt_tpl_list, use_func_order=False
     Parameters:
         df (pd.DataFrame): 処理対象のDataFrame。
         groups (list): グループ化の基となる列名のリスト。
-        tgt_tpl_list (list): ("left", "right", func) 形式のタプルのリスト。
+        col2_func_tpl_list (list): ("left", "right", func) 形式のタプルのリスト。"left", "right"はdfの列名
 
     Returns:
         pd.DataFrame: 処理結果を含むDataFrame。
@@ -155,14 +163,19 @@ def apply_agg_by_groups(df, groups, tgt_tpl_list, use_func_order=False
     # グループ化して各関数を適用
     def apply_funcs(x):
         results = {}
-        for left, right, func in tgt_tpl_list:
-            results[f'{left}-{right}-' + func.__name__] = func(x, left, right)
+        for left, right, func in col2_func_tpl_list:
+            results[f'{left}-{right}_' + func.__name__] = func(x, left, right)
         return pd.Series(results)
-
     applied_df = df.groupby(groups).apply(apply_funcs)
+
+    def remove_last_element(s):
+        parts = s.split("_")
+        return "_".join(parts[:-1])
     # applied_df = restore_column_dtypes(applied_df, dtypes_dict)
     if use_func_order:
-        new_columns = [f"apply2-agg-{str(inx)}" for inx, col in enumerate(applied_df.columns)]
+        # new_columns = [f"apply2-agg_{str(inx)}" for inx, col in enumerate(applied_df.columns)]
+        new_columns = [f"{remove_last_element(col)}_{str(inx)}"
+                       for inx, col in enumerate(applied_df.columns)]
         old_columns = applied_df.columns
         applied_df.columns = new_columns
         columns_map = dict(zip(new_columns, old_columns))
